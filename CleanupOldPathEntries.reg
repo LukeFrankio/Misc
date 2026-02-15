@@ -1,0 +1,18 @@
+Windows Registry Editor Version 5.00
+
+; =============================================================================
+; Removes old context menu entries from the first version of AddToPath.reg.
+; Run this once, then delete this file.
+; =============================================================================
+
+; --- Old entries on folders ---
+[-HKEY_CLASSES_ROOT\Directory\shell\AddToSystemPath]
+[-HKEY_CLASSES_ROOT\Directory\shell\RemoveFromSystemPath]
+[-HKEY_CLASSES_ROOT\Directory\shell\AddToUserPath]
+[-HKEY_CLASSES_ROOT\Directory\shell\RemoveFromUserPath]
+
+; --- Old entries on folder backgrounds ---
+[-HKEY_CLASSES_ROOT\Directory\Background\shell\AddToSystemPath]
+[-HKEY_CLASSES_ROOT\Directory\Background\shell\RemoveFromSystemPath]
+[-HKEY_CLASSES_ROOT\Directory\Background\shell\AddToUserPath]
+[-HKEY_CLASSES_ROOT\Directory\Background\shell\RemoveFromUserPath]

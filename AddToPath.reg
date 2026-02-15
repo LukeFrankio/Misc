@@ -1,0 +1,70 @@
+Windows Registry Editor Version 5.00
+
+; =============================================================================
+; Cascading "Manage PATH" context menu with submenu items.
+;
+; Creates a collapsible submenu (like "New >") with five entries:
+;   - Add to System PATH
+;   - Remove from System PATH
+;   - Add to User PATH
+;   - Remove from User PATH
+;   - Manage PATH... (opens full GUI dialog)
+;
+; IMPORTANT: ManagePath.ps1 must be at D:\DEV\Misc\ManagePath.ps1
+; If you move it, update every path below.
+;
+; Merge: double-click or  reg import AddToPath.reg  (needs admin for HKLM)
+; =============================================================================
+
+; ---- Command Store (HKLM) — defines the submenu actions -----------------
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.AddSystem]
+@="Add to System PATH"
+"Icon"="imageres.dll,3"
+"HasLUAShield"=""
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.AddSystem\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File \"D:\\DEV\\Misc\\ManagePath.ps1\" -Directory \"%1\" -Scope Machine -Action Add"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.RemoveSystem]
+@="Remove from System PATH"
+"Icon"="imageres.dll,89"
+"HasLUAShield"=""
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.RemoveSystem\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File \"D:\\DEV\\Misc\\ManagePath.ps1\" -Directory \"%1\" -Scope Machine -Action Remove"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.AddUser]
+@="Add to User PATH"
+"Icon"="imageres.dll,3"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.AddUser\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File \"D:\\DEV\\Misc\\ManagePath.ps1\" -Directory \"%1\" -Scope User -Action Add"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.RemoveUser]
+@="Remove from User PATH"
+"Icon"="imageres.dll,89"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.RemoveUser\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File \"D:\\DEV\\Misc\\ManagePath.ps1\" -Directory \"%1\" -Scope User -Action Remove"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.Dialog]
+@="Manage PATH..."
+"Icon"="imageres.dll,109"
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommandStore\shell\ManagePath.Dialog\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -File \"D:\\DEV\\Misc\\ManagePath.ps1\" -Directory \"%1\""
+
+; ---- Right-click ON a folder — cascading submenu ------------------------
+
+[HKEY_CLASSES_ROOT\Directory\shell\ManagePath]
+"MUIVerb"="Manage PATH"
+"Icon"="imageres.dll,3"
+"SubCommands"="ManagePath.AddSystem;ManagePath.RemoveSystem;ManagePath.AddUser;ManagePath.RemoveUser;ManagePath.Dialog"
+
+; ---- Right-click INSIDE a folder (background) — cascading submenu -------
+
+[HKEY_CLASSES_ROOT\Directory\Background\shell\ManagePath]
+"MUIVerb"="Manage PATH"
+"Icon"="imageres.dll,3"
+"SubCommands"="ManagePath.AddSystem;ManagePath.RemoveSystem;ManagePath.AddUser;ManagePath.RemoveUser;ManagePath.Dialog"
