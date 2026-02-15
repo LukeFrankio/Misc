@@ -24,14 +24,15 @@ Note:
     Total download time depends on library count (~30-60 min for everything).
 """
 
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse, urldefrag
 import os
 import re
 import time
-from typing import Optional
 from collections import deque
+from typing import Optional
+from urllib.parse import urldefrag, urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
 
 # =============================================================================
 # Configuration
