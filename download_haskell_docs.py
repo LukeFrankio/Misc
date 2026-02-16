@@ -26,6 +26,7 @@ Note:
 
 import os
 import re
+import sys
 import time
 from collections import deque
 from typing import Optional
@@ -140,7 +141,49 @@ def url_to_filepath(url: str, prefix: str, subfolder: str) -> str:
         relative += "index.html"
 
     relative = sanitize_path(relative)
+
+    # After sanitizing, check if path became effectively empty or invalid (just dots/underscores)
+    # This handles edge cases like URLs ending in "..." or other special paths
+    if not relative or relative.strip("._") == "":
+        relative = "index.html"
+
     return os.path.join(OUTPUT_DIR, subfolder, relative)
+
+
+def extract_text(html: str) -> str:
+    """
+    Extracts readable text content from raw HTML.
+
+    Strips navigation, scripts, styles, and boilerplate. Returns clean
+    text with reasonable whitespace.
+
+    Args:
+        html: raw HTML source
+
+    Returns:
+        Plain text content of the page.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove elements that aren't content
+    for tag in soup.find_all(["script", "style", "nav", "footer", "header"]):
+        tag.decompose()
+
+    # Try to find the main content area (Sphinx and Haddock use different structures)
+    content = (
+        soup.find("div", {"role": "main"})
+        or soup.find("div", {"id": "content"})
+        or soup.find("div", {"id": "description"})
+        or soup.find("div", {"class": "document"})
+        or soup.find("body")
+        or soup
+    )
+
+    text = content.get_text(separator="\n")
+
+    # Collapse runs of blank lines into at most two
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def fetch_page(url: str) -> Optional[str]:
@@ -254,30 +297,45 @@ def crawl_and_save(
 
     while queue:
         url = queue.popleft()
-        print(f"  [{saved_count + 1}] Fetching: {url}")
-
-        html = fetch_page(url)
-        if html is None:
-            continue
-
-        # Save the raw HTML
         filepath = url_to_filepath(url, prefix, subfolder)
-        ensure_dir(os.path.dirname(filepath))
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(html)
+        # Check if file already exists (resume from power outage, etc.)
+        if os.path.exists(filepath):
+            print(f"  [{saved_count + 1}] Using cached: {url}")
+            with open(filepath, "r", encoding="utf-8") as f:
+                html = f.read()
+        else:
+            print(f"  [{saved_count + 1}] Fetching: {url}")
+            html = fetch_page(url)
+            if html is None:
+                continue
+
+            # Save the raw HTML
+            ensure_dir(os.path.dirname(filepath))
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(html)
+
+            # Rate limiting (only when actually fetching from network)
+            time.sleep(DELAY)
+
+        # Generate .txt version with extracted text content
+        txt_path = re.sub(r"\.html?$", ".txt", filepath, flags=re.IGNORECASE)
+        if txt_path == filepath:
+            txt_path = filepath + ".txt"
+        if not os.path.exists(txt_path):
+            text = extract_text(html)
+            if text:
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(f"Source: {url}\n\n{text}")
 
         saved_count += 1
 
-        # Extract and enqueue new links
+        # Extract and enqueue new links (works with cached or fresh HTML)
         new_links = extract_links(html, url, prefix)
         for link in new_links:
             if link not in visited:
                 visited.add(link)
                 queue.append(link)
-
-        # Rate limiting
-        time.sleep(DELAY)
 
     print(f"  => Saved {saved_count} pages for {description}")
     return saved_count
@@ -375,7 +433,30 @@ def main() -> None:
 
     Creates the output directory structure and runs each crawler,
     printing a final summary of total pages saved.
+
+    Command-line flags:
+        --force-extract: Convert all HTML to .txt without checking if .txt
+                        already exists (faster for retroactive conversion).
     """
+    # Parse command-line arguments
+    force_extract: bool = "--force-extract" in sys.argv
+
+    # pylint: disable=C0303
+
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print("""
+Usage: python download_haskell_docs.py [OPTIONS]
+
+Options:
+  --force-extract   Convert all HTML files to .txt without checking if .txt
+                    already exists. Useful for faster retroactive conversion
+                    of large cached HTML file sets. (default: False)
+  -h, --help        Show this help message and exit
+""")
+        return
+    
+    # pylint: disable=C0303
+    
     ensure_dir(OUTPUT_DIR)
 
     print("=" * 60)
@@ -383,6 +464,8 @@ def main() -> None:
     print("=" * 60)
     print(f"Output directory: {os.path.abspath(OUTPUT_DIR)}")
     print(f"Request delay:    {DELAY}s between requests")
+    if force_extract:
+        print("Mode:             Force extract (skip .txt existence checks)")
     print()
 
     total: int = 0
@@ -400,6 +483,9 @@ def main() -> None:
     # 4. Haddock documentation
     total += download_haddock_docs()
 
+    # Convert any HTML files from previous runs that don't have .txt yet
+    convert_existing_html(force=force_extract)
+
     elapsed: float = time.time() - start_time
     minutes: int = int(elapsed // 60)
     seconds: int = int(elapsed % 60)
@@ -409,6 +495,50 @@ def main() -> None:
     print(f"  COMPLETE — {total} pages saved in {minutes}m {seconds}s")
     print(f"  Output: {os.path.abspath(OUTPUT_DIR)}")
     print("=" * 60)
+
+
+def convert_existing_html(force: bool = False) -> None:
+    """
+    Walks the output directory and generates .txt files for HTML files.
+
+    Args:
+        force: If True, overwrites existing .txt files. If False, skips
+               HTML files that already have a .txt version.
+
+    This handles HTML files from previous runs that were saved before
+    the text extraction feature was added. Use force=True to convert all
+    HTML files without checking if .txt already exists (faster).
+    """
+    converted: int = 0
+    for root, _dirs, files in os.walk(OUTPUT_DIR):
+        for name in files:
+            if not name.lower().endswith((".html", ".htm")):
+                continue
+            html_path = os.path.join(root, name)
+            txt_path = re.sub(r"\.html?$", ".txt", html_path, flags=re.IGNORECASE)
+
+            # pylint: disable=C0303
+
+            # Skip if .txt already exists (unless force=True)
+            if not force and os.path.exists(txt_path):
+                continue
+
+            # pylint: disable=C0303
+
+            try:
+                with open(html_path, "r", encoding="utf-8") as f:
+                    html = f.read()
+                text = extract_text(html)
+                if text:
+                    with open(txt_path, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    converted += 1
+            except (OSError, UnicodeError) as e:
+                # Only catch file I/O / encoding-related errors here; let other
+                # unexpected exceptions propagate so they aren't silently swallowed.
+                print(f"  [WARN] Could not convert {html_path}: {e}")
+    if converted:
+        print(f"  => Converted {converted} existing HTML files to .txt")
 
 
 if __name__ == "__main__":
