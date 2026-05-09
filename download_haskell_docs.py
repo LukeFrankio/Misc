@@ -224,7 +224,10 @@ def extract_links(html: str, base_url: str, prefix: str) -> list[str]:
     links: list[str] = []
 
     for a_tag in soup.find_all("a", href=True):
-        href: str = a_tag["href"]
+        href_value = a_tag.get("href")
+        if not isinstance(href_value, str):
+            continue
+        href = href_value
 
         # Skip fragment-only links, javascript, mailto
         if href.startswith(("#", "javascript:", "mailto:")):

@@ -157,10 +157,50 @@ def _safe_rel_posix(root: Path, child: Path) -> str:
 
     try:
         rel = child.relative_to(root)
-    except Exception:
+    except ValueError:
         # If it can't be made relative, treat as absolute-ish string
         rel = child
     return rel.as_posix()
+
+
+DirectoryIdentity = tuple[int, int] | str
+
+
+def _directory_identity(path: Path) -> DirectoryIdentity | None:
+    """Returns a stable identifier for a directory target when following symlinks.
+
+    ✨ PURE FUNCTION ✨
+    """
+
+    try:
+        stat_result = path.stat()
+    except OSError:
+        return None
+
+    device = int(getattr(stat_result, "st_dev", 0))
+    inode = int(getattr(stat_result, "st_ino", 0))
+    if device != 0 or inode != 0:
+        return (device, inode)
+
+    try:
+        return str(path.resolve(strict=False))
+    except (OSError, RuntimeError):
+        return path.as_posix()
+
+
+def _mark_directory_visited(visited: set[DirectoryIdentity], path: Path) -> bool:
+    """Marks a directory target as visited and reports whether it is new.
+
+    ✨ PURE FUNCTION ✨
+    """
+
+    identity = _directory_identity(path)
+    if identity is None:
+        return True
+    if identity in visited:
+        return False
+    visited.add(identity)
+    return True
 
 
 def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> ScanResult:
@@ -193,6 +233,10 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
     ext_counts: dict[str, int] = {}
     dir_summaries: dict[Path, DirSummary] = {}
     errors: list[str] = []
+    visited_directories: set[DirectoryIdentity] = set()
+
+    if options.follow_symlinks:
+        _mark_directory_visited(visited_directories, root)
 
     # We keep a simple list and sort at the end; for directories with huge file counts,
     # you could switch to a heap, but this is usually fine for personal projects.
@@ -224,7 +268,7 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
         try:
             with os.scandir(path) as it:
                 entries = list(it)
-        except Exception as e:  # permissions, transient issues, etc.
+        except OSError as e:  # permissions, transient issues, etc.
             errors.append(f"Failed to list {path}: {e}")
             summary = DirSummary(path=path, size_bytes=0, file_count=0, dir_count=0)
             dir_summaries[path] = summary
@@ -238,7 +282,7 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
 
             try:
                 is_symlink = entry.is_symlink()
-            except Exception:
+            except OSError:
                 is_symlink = False
 
             if is_symlink and not options.follow_symlinks:
@@ -250,7 +294,7 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
                         st = entry.stat(follow_symlinks=options.follow_symlinks)
                         size = int(st.st_size)
                         mtime = float(st.st_mtime)
-                    except Exception as e:
+                    except OSError as e:
                         errors.append(f"Failed to stat file {child}: {e}")
                         continue
 
@@ -259,6 +303,10 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
                     file_count += 1
 
                 elif entry.is_dir(follow_symlinks=options.follow_symlinks):
+                    if options.follow_symlinks and not _mark_directory_visited(visited_directories, child):
+                        errors.append(f"Skipped already-visited directory target: {child}")
+                        continue
+
                     sub = walk_dir(child)
                     size_total += sub.size_bytes
                     file_count += sub.file_count
@@ -268,7 +316,7 @@ def scan_directory(root: Path, options: ScanOptions, largest_files: int) -> Scan
                     # sockets, device files, etc. (rare on Windows)
                     continue
 
-            except Exception as e:
+            except OSError as e:
                 errors.append(f"Failed to inspect {child}: {e}")
 
         summary = DirSummary(path=path, size_bytes=size_total, file_count=file_count, dir_count=dir_count)
@@ -316,6 +364,10 @@ def _tree_lines(
 
     lines: list[str] = []
     emitted = 0
+    visited_directories: set[DirectoryIdentity] = set()
+
+    if options.follow_symlinks:
+        _mark_directory_visited(visited_directories, root)
 
     def should_skip(path: Path) -> bool:
         rel_posix = _safe_rel_posix(root, path)
@@ -335,7 +387,7 @@ def _tree_lines(
         try:
             st = path.stat()
             return f"{path.name}  ({_human_bytes(int(st.st_size))})"
-        except Exception:
+        except OSError:
             return f"{path.name}  (<unreadable>)"
 
     def walk(current: Path, prefix: str, level: int) -> None:
@@ -346,7 +398,7 @@ def _tree_lines(
         try:
             with os.scandir(current) as it:
                 entries = list(it)
-        except Exception:
+        except OSError:
             lines.append(prefix + "[unreadable]")
             emitted += 1
             return
@@ -363,7 +415,7 @@ def _tree_lines(
                     dirs.append(p)
                 elif e.is_file(follow_symlinks=options.follow_symlinks):
                     files.append(p)
-            except Exception:
+            except OSError:
                 continue
 
         def dir_sort_key(p: Path) -> int:
@@ -373,7 +425,7 @@ def _tree_lines(
         def file_sort_key(p: Path) -> int:
             try:
                 return -int(p.stat().st_size)
-            except Exception:
+            except OSError:
                 return 0
 
         dirs.sort(key=dir_sort_key)
@@ -392,6 +444,12 @@ def _tree_lines(
             if is_dir:
                 lines.append(prefix + branch + dir_label(child))
                 emitted += 1
+
+                if options.follow_symlinks and not _mark_directory_visited(visited_directories, child):
+                    lines.append(next_prefix + "[already visited target skipped]")
+                    emitted += 1
+                    continue
+
                 # depth <= 0 means "unlimited" depth (bounded only by max_entries)
                 if depth <= 0 or (level + 1) < depth:
                     walk(child, next_prefix, level + 1)
@@ -457,7 +515,7 @@ def _group_sizes_for_treemap(root: Path, scan: ScanResult, depth: int) -> list[T
             continue
         try:
             d.relative_to(root)
-        except Exception:
+        except ValueError:
             continue
         parent = d.parent
         if parent not in children:
@@ -485,10 +543,10 @@ def _group_sizes_for_treemap(root: Path, scan: ScanResult, depth: int) -> list[T
             if child.is_file():
                 try:
                     size = int(child.stat().st_size)
-                except Exception:
+                except OSError:
                     continue
                 add_bucket(child.name, size)
-    except Exception:
+    except OSError:
         # If root listing fails, we still can create directory buckets.
         pass
 
@@ -496,7 +554,7 @@ def _group_sizes_for_treemap(root: Path, scan: ScanResult, depth: int) -> list[T
     for dir_path, summ in scan.dir_summaries.items():
         try:
             rel = dir_path.relative_to(root)
-        except Exception:
+        except ValueError:
             continue
 
         # Skip root itself for directory buckets.
@@ -751,7 +809,7 @@ def _sha256_hex(path: Path) -> str:
             for chunk in iter(lambda: f.read(1024 * 1024), b""):
                 h.update(chunk)
         return h.hexdigest()
-    except Exception:
+    except OSError:
         return "<unreadable>"
 
 
@@ -778,7 +836,7 @@ def write_markdown_report(
     def iso(ts: float) -> str:
         try:
             return datetime.fromtimestamp(ts).isoformat(timespec="seconds")
-        except Exception:
+        except (OSError, OverflowError, ValueError):
             return "<unknown>"
 
     md: list[str] = []
@@ -888,7 +946,7 @@ def generate_outputs(
     treemap_rel = None
     try:
         treemap_rel = svg_path.relative_to(md_path.parent).as_posix()
-    except Exception:
+    except ValueError:
         treemap_rel = svg_path.as_posix()
 
     write_markdown_report(
@@ -1013,7 +1071,7 @@ class DirectoryMapperApp:
             return
         try:
             os.startfile(out)  # type: ignore[attr-defined]
-        except Exception as e:
+        except (AttributeError, FileNotFoundError, OSError) as e:
             messagebox.showerror("Error", f"Failed to open output folder:\n{e}")
 
     def generate(self) -> None:
@@ -1064,7 +1122,7 @@ class DirectoryMapperApp:
                 "Success",
                 f"Generated:\n- {md_path}\n- {svg_path}",
             )
-        except Exception as e:
+        except (OSError, RuntimeError, TypeError, ValueError, tk.TclError) as e:
             self.status.set("Error")
             messagebox.showerror("Error", f"Failed to generate directory map:\n{e}")
 

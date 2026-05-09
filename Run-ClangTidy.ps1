@@ -658,7 +658,10 @@ Write-Host ''
 
 # Step 3.5: Create filtered compile_commands.json for clang-tidy
 # (removes C++20 module flags that clang-tidy doesn't understand)
-$filteredCompileCommands = Join-Path $BuildPath 'compile_commands_filtered.json'
+$filteredCompileCommandsDir = Join-Path $BuildPath '.clang-tidy-filtered-db'
+New-Item -Path $filteredCompileCommandsDir -ItemType Directory -Force | Out-Null
+
+$filteredCompileCommands = Join-Path $filteredCompileCommandsDir 'compile_commands.json'
 $filterResult = New-FilteredCompileCommands -SourcePath $compileCommands -DestinationPath $filteredCompileCommands
 
 if (-not $filterResult.Success) {
@@ -668,6 +671,7 @@ if (-not $filterResult.Success) {
 
 Write-Host "✓ Created filtered compile_commands.json (removed module flags)" -ForegroundColor Green
 Write-Host "  Filtered: $filteredCompileCommands" -ForegroundColor Gray
+Write-Host "  Database dir: $filteredCompileCommandsDir" -ForegroundColor Gray
 Write-Host ''
 
 # use filtered compile commands for clang-tidy
