@@ -1,0 +1,30 @@
+Windows Registry Editor Version 5.00
+
+; =============================================================================
+; "Txtify" context menu entry.
+;
+; Renames any selected file by appending .txt to its current extension.
+;   test.md       ->  test.md.txt
+;   archive.zip   ->  archive.zip.txt
+;   script.sh     ->  script.sh.txt
+;   image.png     ->  image.png.txt
+;
+; IMPORTANT: TxtifyFile.ps1 must be at D:\DEV\Misc\TxtifyFile.ps1
+; If you move it, update every path below.
+;
+; Merge: double-click or  reg import Txtify.reg
+; (No elevation required — writes to current user's class overrides.)
+; =============================================================================
+
+; ---- Right-click on any file (single or multi-select) ----------------------
+;
+; When multiple files are selected Windows spawns one process per file.
+; TxtifyFile.ps1 uses a coordinator mutex so only the first process does
+; the actual renaming; the rest exit in under 100 ms.
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\Txtify]
+@="Txtify (append .txt)"
+"Icon"="imageres.dll,2"
+
+[HKEY_CURRENT_USER\Software\Classes\*\shell\Txtify\command]
+@="pwsh.exe -ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File \"D:\\DEV\\Misc\\TxtifyFile.ps1\" -FilePath \"%1\""
